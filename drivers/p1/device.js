@@ -39,7 +39,7 @@ class P1Device extends Device {
 			this.log('P1 device has been initialized');
 		} catch (error) {
 			this.error(error);
-			this.setUnavailable(error);
+			this.setUnavailable(error).catch(() => null);
 			this.restartDevice(60 * 1000);
 		}
 	}
@@ -80,13 +80,13 @@ class P1Device extends Device {
 			if (this.watchDogCounter <= 0) {
 				this.log('watchdog triggered, restarting Homey device now');
 				this.setCapability('alarm_fault', true);
-				this.setUnavailable(this.homey.__('sessy.connectionError'));
+				this.setUnavailable(this.homey.__('sessy.connectionError')).catch(() => null);
 				this.restartDevice(60000);
 				return;
 			}
 			// get new status and update the devicestate
 			const status = await this.sessy.getStatus({ p1: true });
-			this.setAvailable();
+			this.setAvailable().catch(() => null);
 			await this.updateDeviceState(status);
 			this.watchDogCounter = 10;
 		} catch (error) {

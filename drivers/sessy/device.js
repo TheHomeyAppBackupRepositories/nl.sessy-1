@@ -56,7 +56,7 @@ class SessyDevice extends Device {
 		} catch (error) {
 			this.error(error);
 			this.setCapability('alarm_fault', true);
-			this.setUnavailable(error);
+			this.setUnavailable(error).catch(() => null);
 			this.restartDevice(60 * 1000);
 		}
 	}
@@ -90,7 +90,7 @@ class SessyDevice extends Device {
 				const caps = await this.getCapabilities();
 				const newCap = correctCaps[index];
 				if (caps[index] !== newCap) {
-					this.setUnavailable(this.homey.__('sessy.migrating'));
+					this.setUnavailable(this.homey.__('sessy.migrating')).catch(() => null);
 					// remove all caps from here
 					for (let i = index; i < caps.length; i += 1) {
 						this.log(`removing capability ${caps[i]} for ${this.getName()}`);
@@ -151,7 +151,7 @@ class SessyDevice extends Device {
 			if (this.watchDogCounter <= 0) {
 				this.log('watchdog triggered, restarting Homey device now');
 				this.setCapability('alarm_fault', true);
-				this.setUnavailable(this.homey.__('sessy.connectionError'));
+				this.setUnavailable(this.homey.__('sessy.connectionError')).catch(() => null);
 				this.restartDevice(60000);
 				return;
 			}
@@ -164,10 +164,10 @@ class SessyDevice extends Device {
 			const status = await this.sessy.getStatus();
 			let strategy = null;
 			if (this.getSettings().username !== '' && this.getSettings().password !== '') strategy = await this.sessy.getStrategy();
-			this.setAvailable();
+			this.setAvailable().catch(() => null);
 			await this.updateDeviceState(status, strategy);
-			// check if power is within min/max settings
-			await this.checkMinMaxPower(status.sessy.power);
+			// check if power is within min/max settings, but only if setpoint is set
+			if (status.sessy.power_setpoint) await this.checkMinMaxPower(status.sessy.power);
 			// check if battery is empty or full
 			await this.checkBatEmptyFull();
 			// check fw every 60 minutes
@@ -323,10 +323,9 @@ class SessyDevice extends Device {
 
 	// detect empty or full battery
 	async checkBatEmptyFull() {
-		if (this.getCapabilityValue('system_state').includes('EMPTY_OR_FULL')) {
-			if (this.getCapabilityValue('measure_battery') < 20) this.batIsEmpty = true;
-			if (this.getCapabilityValue('measure_battery') > 80) this.batIsFull = true;
-		} else if (this.overrideCounter >= 3) {
+		if (this.getCapabilityValue('system_state').includes('EMPTY')) this.batIsEmpty = true;
+		else if (this.getCapabilityValue('system_state').includes('FULL')) this.batIsFull = true;
+		else if (this.overrideCounter >= 3) {
 			if (this.getCapabilityValue('measure_battery') < 1) this.batIsEmpty = true;
 			if (this.getCapabilityValue('measure_battery') > 99) this.batIsFull = true;
 		}	else {
