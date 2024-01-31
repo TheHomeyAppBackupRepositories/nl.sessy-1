@@ -1,0 +1,50 @@
+[
+  {
+    "name": "Installatie",
+    "createdByUserName": "gruijter@hotmail.com",
+    "sessyBatteries": null,
+    "userInstallations": [
+      {
+        "userId": "9f170c0a-38ba-43f0-8ba7-61e4d1943124",
+        "user": {
+          "isPrivateSettings": false,
+          "energyContractType": 0,
+          "firmwareUpdateSetting": 1,
+          "releaseNotifications": null,
+          "firmwareUpdateNotes": null,
+          "userInstallations": [ null ],
+          "dynamicContractSettings": null,
+          "openApiProviderId": null,
+          "openApiProvider": null,
+          "id": "9f170c0a-38ba-43f0-8ba7-61e4d1943124",
+          "userName": "gruijter@hotmail.com",
+          "normalizedUserName": "GRUIJTER@HOTMAIL.COM",
+          "email": "gruijter@hotmail.com",
+          "normalizedEmail": "GRUIJTER@HOTMAIL.COM",
+          "emailConfirmed": false,
+          "securityStamp": "4PPUWCM34DZCT4IKXDSYOCN7HG3FVZ63",
+          "concurrencyStamp": "c41989b9-d6fa-464a-9aa2-1dc246c41217",
+          "phoneNumber": null,
+          "phoneNumberConfirmed": false,
+          "twoFactorEnabled": false,
+          "lockoutEnd": null,
+          "lockoutEnabled": true,
+          "accessFailedCount": 0
+        },
+        "installationId": 71,
+        "installation": null,
+        "installationRole": 1,
+        "id": 280,
+        "created": 1683107949772,
+        "createdBy": "9f170c0a-38ba-43f0-8ba7-61e4d1943124",
+        "lastModified": null,
+        "lastModifiedBy": null
+      }
+    ],
+    "id": 71,
+    "created": 1683107949772,
+    "createdBy": "9f170c0a-38ba-43f0-8ba7-61e4d1943124",
+    "lastModified": null,
+    "lastModifiedBy": null
+  }
+]

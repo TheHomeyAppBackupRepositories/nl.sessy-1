@@ -25,27 +25,7 @@ class SessyApp extends Homey.App {
 
 	async onInit() {
 		this.registerFlowListeners();
-		this.everyHour();
 		this.log('Sessy app has been initialized');
-	}
-
-	async onUninit() {
-		this.log('app onUninit called');
-		this.homey.removeAllListeners('everyhour');
-	}
-
-	everyHour() {
-		const now = new Date();
-		const nextHour = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours() + 1, 0, 0, 50);
-		const timeToNextHour = nextHour - now;
-		// console.log('everyHour starts in', timeToNextHour / 1000);
-		this.homey.setTimeout(() => {
-			this.homey.setInterval(async () => {
-				this.homey.emit('everyhour', true);
-			}, 60 * 60 * 1000);
-			this.homey.emit('everyhour', true);
-		}, timeToNextHour);
-		this.log('everyHour job started');
 	}
 
 	registerFlowListeners() {
@@ -58,12 +38,6 @@ class SessyApp extends Homey.App {
 
 		const setControlStrategy = this.homey.flow.getActionCard('set_control_strategy');
 		setControlStrategy.registerRunListener((args) => args.device.setControlStrategy(args.controlStrategy, 'flow'));
-
-		const setGridtarget = this.homey.flow.getActionCard('set_grid_target');
-		setGridtarget.registerRunListener((args) => args.device.setGridTarget(args.gridTarget, 'flow'));
-
-		const restart = this.homey.flow.getActionCard('restart');
-		restart.registerRunListener((args) => args.device.restart('flow'));
 
 		// trigger cards
 		this.triggerSystemStateChanged = (device, tokens, state) => {
@@ -96,13 +70,6 @@ class SessyApp extends Homey.App {
 				.trigger(device, tokens, state)
 				.catch(this.error);
 		};
-		this.triggerTariffChanged = (device, tokens, state) => {
-			const tariffChanged = this.homey.flow.getDeviceTriggerCard('tariff_changed');
-			tariffChanged
-				.trigger(device, tokens, state)
-				.catch(this.error);
-		};
-
 	}
 
 }

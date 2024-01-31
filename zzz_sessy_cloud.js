@@ -19,55 +19,44 @@ along with nl.sessy. If not, see <http://www.gnu.org/licenses/>.
 
 'use strict';
 
-const http = require('http');
+const https = require('https');
 const os = require('os');
 const util = require('util');
 
 const setTimeoutPromise = util.promisify(setTimeout);
 
-// SYSTEM
-const getSystemInfoEP = '/api/v1/system/info'; // version "v5.1.1"?, sessy_serial
-const restartEP = '/api/v1/system/restart'; // data: {}
-
-// OTA
-const getOTACheckEP = '/api/v1/ota/check';
-const getOTAStatusEP = '/api/v1/ota/status';
-// const setUpdateEP = '/api/v1/ota/start'; // data: { target: 'OTA_TARGET_SELF'/'OTA_TARGET_SERIAL' }
-
-// NETWORK
-// const getNetworkScan = '/api/v1/network/scan';
-// const getNetworkStatusEP = '/api/v1/network/status';
-// const setWifiEP = '/api/v1/wifi_sta/credentials'; // data: { ssid, pass }
+const loginEP = '/Authentication/Login';
+const getInstallationsEP = '/User/GetInstallations';
+const getSessyBatteryListEP = '/SessyBattery/List';
+const getStatusEP = '/DongleTelemetrics/Single';
 
 // P1
 const getP1StatusEP = '/api/v1/p1/status';
-const getP1DetailsEP = '/api/v2/p1/details'; // fw > 1.5.2
-
-// CT
-const getCTDetailsEP = '/api/v1/ct/details'; // fw > 1.5.2
-
-// METER
-const getGridTargetEP = '/api/v1/meter/grid_target'; // fw > 1.5.2
-const setGridTargetEP = '/api/v1/meter/grid_target'; // fw > 1.5.2 data: { grid_target: 0 }
-
+// const getP1StatusEP = '/api/v1/p1/details';
+// OTA
+const getOTACheckEP = '/api/v1/ota/check';
+const getOTAStatusEP = '/api/v1/ota/status';
 // SESSY
-const getStatusEP = '/api/v1/power/status';
+// const getStatusEP = '/api/v1/power/status';
 const getStrategyEP = '/api/v1/power/active_strategy';
 const setStrategyEP = '/api/v1/power/active_strategy';
 const setSetpointEP = '/api/v1/power/setpoint';
 
-const defaultPort = 80;
+const defaultHost = 'charged-api-test.azurewebsites.net'; // 'api.sessy.nl';
+const defaultPort = 443;
 const defaultTimeout = 15000;
 
-// Represents a session to the local Sessy API.
+// Represents a session to the Sessy Cloud API.
 class Sessy {
 	constructor(opts) {
 		const options = opts || {};
-		this.username = options.sn_dongle && options.sn_dongle.toUpperCase();
-		this.password = options.password_dongle && options.password_dongle.toUpperCase();
-		this.host = options.host;
+		this.username = options.username;
+		this.password = options.password;
+		this.host = options.host || defaultHost;
 		this.port = options.port || defaultPort;
 		this.timeout = options.timeout || defaultTimeout;
+		this.token = '';
+		this.validTo = null;
 		this.lastResponse = undefined;
 	}
 
@@ -76,42 +65,58 @@ class Sessy {
 			const options = opts || {};
 			const host = options.host || this.host;
 			const port = options.port || this.port;
-			const username = (options.sn_dongle && options.sn_dongle.toUpperCase()) || this.username;
-			const password = (options.password_dongle && options.password_dongle.toUpperCase()) || this.password;
+			const username = options.username || this.username;
+			const password = options.password || this.password;
 			const timeout = options.timeout || this.timeout;
 			this.host = host;
 			this.port = port;
 			this.username = username;
 			this.password = password;
 			this.timeout = timeout;
-			const status = await this.getStatus(options);
-			return Promise.resolve(status);
-		} catch (error) {
-			return Promise.reject(error);
-		}
-	}
-
-	async getStatus(opts) {
-		try {
-			const options = opts || {};
-			let statusEP = getStatusEP;
-			if (options && options.p1) statusEP = getP1DetailsEP;
-			if (options && options.ct) statusEP = getCTDetailsEP;
-			const res = await this._makeRequest(statusEP);
-			this.status = res;
+			const data = {
+				username,
+				password: Buffer.from(password).toString('base64'),
+			};
+			const res = await this._makeRequest(loginEP, data);
+			const { token, validTo } = res;
+			if (!token) throw Error('No token received');
+			this.token = token;
+			this.validTo = validTo;
 			return Promise.resolve(res);
 		} catch (error) {
-			if (error && error.message
-				&& error.message.includes('Status code: 404')) return Promise.reject(Error('Status info not found. Use the latest firmware!'));
 			return Promise.reject(error);
 		}
 	}
 
-	async getSystemInfo() {
+	async getInstallations() {
 		try {
 			const data = '';
-			const res = await this._makeRequest(getSystemInfoEP, data);
-			this.status = res;
+			const res = await this._makeRequest(getInstallationsEP, data);
+			this.installations = res;
+			return Promise.resolve(res);
+		} catch (error) {
+			return Promise.reject(error);
+		}
+	}
+
+	async getSessyBatteryList(installationId) {
+		try {
+			const data = '';
+			const EP = `${getSessyBatteryListEP}?InstallationId=${installationId}`;
+			const res = await this._makeRequest(EP, data);
+			this.batteryList = res;
+			return Promise.resolve(res);
+		} catch (error) {
+			return Promise.reject(error);
+		}
+	}
+
+	async getStatus(deviceId) {
+		try {
+			const data = '';
+			const EP = `${getStatusEP}?DeviceId=${deviceId}&IsDescending=true`;
+			const res = await this._makeRequest(EP, data);
+			this.batteryList = res;
 			return Promise.resolve(res);
 		} catch (error) {
 			return Promise.reject(error);
@@ -171,36 +176,6 @@ class Sessy {
 		}
 	}
 
-	async getGridTarget() {
-		try {
-			const data = '';
-			const res = await this._makeRequest(getGridTargetEP, data);
-			return Promise.resolve(res);
-		} catch (error) {
-			return Promise.reject(error);
-		}
-	}
-
-	async setGridTarget(opts) {
-		try {
-			const options = opts || {};
-			const data = { grid_target: options.setpoint };
-			const res = await this._makeRequest(setGridTargetEP, data);
-			return Promise.resolve(res);
-		} catch (error) {
-			return Promise.reject(error);
-		}
-	}
-
-	async restart() {
-		try {
-			const res = this._makeRequest(restartEP, undefined, 1000).catch(() => null);
-			return Promise.resolve(res);
-		} catch (error) {
-			return Promise.reject(error);
-		}
-	}
-
 	async discover(opts) {
 		try {
 			const hostsToTest = [];	// make an array of all host IP's in the LAN
@@ -227,9 +202,7 @@ class Sessy {
 			});
 
 			// try all servers for login response, with http timeout 4 seconds
-			let discoveryEP = getStatusEP;
-			if (opts && opts.p1) discoveryEP = getP1StatusEP;
-			if (opts && opts.ct) discoveryEP = getCTDetailsEP;
+			const discoveryEP = (opts && opts.p1) ? getP1StatusEP : getStatusEP;
 			const allHostsPromise = hostsToTest.map(async (hostToTest) => {
 				let found = false;
 				const status = await this._makeRequest(discoveryEP, undefined, 4000, hostToTest).catch(() => undefined);
@@ -250,40 +223,42 @@ class Sessy {
 
 	async _makeRequest(actionPath, data, timeout, host) {
 		try {
+			// check token validity
+			if (actionPath !== loginEP) {
+				if ((this.validTo - Date.now()) < 60 * 60 * 1000) await this.login();
+			}
 			const postData = JSON.stringify(data);
 			const headers = {
+				'Content-Type': 'application/json',
+				Authorization: `Bearer ${this.token}`,
 			};
-			if (this.client) headers.Client = this.client;
 			const options = {
 				hostname: host || this.host,
 				port: this.port,
 				path: actionPath,
-				auth: `${this.username}:${this.password}`,
 				headers,
 				method: 'GET',
 			};
 			if (data && data !== '') options.method = 'POST';
-			if (actionPath === restartEP) options.method = 'POST';
-			// console.log(options);
-			const result = await this._makeHttpRequest(options, postData, timeout);
+			console.log(options, postData);
+			const result = await this._makeHttpsRequest(options, postData, timeout);
 			this.lastResponse = result.body || result.statusCode;
 			const contentType = result.headers['content-type'];
 			// find errors
 			if (result.statusCode === 500) {
-				throw Error(`Request Failed: ${result.body}`);
+				throw Error(`Request Failed: ${result.statusMessage} ${result.body}`);
 			}
 			if (result.statusCode === 401) {
-				throw Error('Wrong username/password');
+				throw Error('Athentication failure', result.statusMessage);
 			}
 			if (result.statusCode !== 200) {
 				this.lastResponse = result.statusCode;
-				throw Error(`HTTP request Failed. Status Code: ${result.statusCode}`);
+				throw Error(`HTTP request Failed. Status Code: ${result.statusCode} ${result.statusMessage}`);
 			}
 			if (!/application\/json/.test(contentType)) {
 				throw Error(`Expected json but received ${contentType}: ${result.body}`);
 			}
 			const json = JSON.parse(result.body);
-			if (!json.status || json.status !== 'ok') throw Error(`Request not ok: ${result.body}`);
 			// console.dir(json, { depth: null });
 			return Promise.resolve(json);
 		} catch (error) {
@@ -291,11 +266,11 @@ class Sessy {
 		}
 	}
 
-	_makeHttpRequest(options, postData, timeout) {
+	_makeHttpsRequest(options, postData, timeout) {
 		return new Promise((resolve, reject) => {
 			const opts = options;
 			opts.timeout = timeout || this.timeout;
-			const req = http.request(opts, (res) => {
+			const req = https.request(opts, (res) => {
 				let resBody = '';
 				res.on('data', (chunk) => {
 					resBody += chunk;
@@ -326,68 +301,36 @@ class Sessy {
 module.exports = Sessy;
 
 // START TEST HERE
-// const test = async () => {
-// 	const SESSY = new Sessy();
-// 	const discovered = await SESSY.discover({ p1: true });
-// 	const SESSY = new Sessy({ sn_dongle: '....', password_dongle: '....', host: '....' });
-// 	const res = await SESSY.restart();
-// 	console.log(res);
-// 	const discovered = await SESSY.discover();
-// 	console.dir(discovered, { depth: null });
-// 	const status = await SESSY.getStatus();
-// 	console.dir(status, { depth: null });
-// 	const setStrategy = await SESSY.setStrategy({ strategy: 'POWER_STRATEGY_API' });
-// 	console.dir(setStrategy, { depth: null });
-// 	const strategy = await SESSY.getStrategy();
-// 	console.dir(strategy, { depth: null });
-// 	const setSetpoint = await SESSY.setSetpoint({ setpoint: 500 });
-// 	console.dir(setSetpoint, { depth: null });
-// 	const status2 = await SESSY.getStatus();
-// 	console.dir(status2, { depth: null });
-// 	const OTAstatus = await SESSY.getOTAStatus();
-// 	console.dir(OTAstatus, { depth: null });
-// };
+const test = async () => {
+	const SESSY = new Sessy({ username: 'gruijter@hotmail.com', password: 'zWdwHq2KfiUIFEwVLBwa#1' });
+	// const bearer = await SESSY.login();
+	// console.dir(bearer, { depth: null });
+	const installations = await SESSY.getInstallations();
+	console.dir(installations, { depth: null });
+	const batteryList = await SESSY.getSessyBatteryList(71);
+	console.dir(batteryList, { depth: null });
+	const status = await SESSY.getStatus('AP6QQVPY');
+	console.dir(status, { depth: null });
 
-// test();
+	// const discovered = await SESSY.discover({ p1: true });
+	// const SESSY = new Sessy({ username: '.....', password: '.....', host: '10.0.0.10' });
+	// const discovered = await SESSY.discover();
+	// console.dir(discovered, { depth: null });
+	// const setStrategy = await SESSY.setStrategy({ strategy: 'POWER_STRATEGY_API' });
+	// console.dir(setStrategy, { depth: null });
+	// const strategy = await SESSY.getStrategy();
+	// console.dir(strategy, { depth: null });
+	// const setSetpoint = await SESSY.setSetpoint({ setpoint: 500 });
+	// console.dir(setSetpoint, { depth: null });
+	// const status2 = await SESSY.getStatus();
+	// console.dir(status2, { depth: null });
+	// const OTAstatus = await SESSY.getOTAStatus();
+	// console.dir(OTAstatus, { depth: null });
+};
+
+test();
 
 /*
-fw source: https://github.com/ChargedBV/sessy-updates
-
-status p1 v2:
-{
-	"status":	"ok",
-	"state":	"P1_OK",
-	"dsmr_version":	50,
-	"power_consumed_tariff1":	745838,
-	"power_produced_tariff1":	201650,
-	"power_consumed_tariff2":	523255,
-	"power_produced_tariff2":	545889,
-	"tariff_indicator":	2,
-	"power_consumed":	313,
-	"power_produced":	0,
-	"power_total":	313,
-	"power_failure_any_phase":	11,
-	"long_power_failure_any_phase":	1,
-	"voltage_sag_count_l1":	0,
-	"voltage_sag_count_l2":	0,
-	"voltage_sag_count_l3":	0,
-	"voltage_swell_count_l1":	0,
-	"voltage_swell_count_l2":	0,
-	"voltage_swell_count_l3":	0,
-	"voltage_l1":	237700,
-	"voltage_l2":	0,
-	"voltage_l3":	0,
-	"current_l1":	2000,
-	"current_l2":	0,
-	"current_l3":	0,
-	"power_consumed_l1":	313,
-	"power_consumed_l2":	0,
-	"power_consumed_l3":	0,
-	"power_produced_l1":	0,
-	"power_produced_l2":	0,
-	"power_produced_l3":	0
-}
-
 Status response:
 {
   status: 'ok',
@@ -395,9 +338,7 @@ Status response:
     state_of_charge: 0.38999998569488525,
     power: -1932,
     power_setpoint: -2200,
-    system_state: 'SYSTEM_STATE_RUNNING_SAFE',
-		system_state_details: '',
-    frequency: 50007
+    system_state: 'SYSTEM_STATE_RUNNING_SAFE'
   },
   renewable_energy_phase1: { voltage_rms: 234591, current_rms: 1000, power: 234 },
   renewable_energy_phase2: { voltage_rms: 0, current_rms: 0, power: 0 },
@@ -416,26 +357,6 @@ Status response:
   renewable_energy_phase3: { voltage_rms: 0, current_rms: 0, power: 0 }
 }
 
-system Info Sessy:
-{
-	"status":	"ok",
-	"version":	"v5.1.1",
-	"cores":	2,
-	"internal_mem_available":	52744,
-	"external_mem_available":	3406348,
-	"internal_mem_min":	45800,
-	"external_mem_min":	2541612,
-	"system_state":	[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-	"state_last_changed":	[-1, 683534483, -1, -1, -1, -1, -1, -1, -1, -1, 51930090, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-		166362640, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-		-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-		-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-		-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-		-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-		-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1],
-	"sessy_serial":	"AP6QQVPY"
-}
-
 Strategy response:
 { status: 'ok', strategy: 'POWER_STRATEGY_API' }
 
@@ -443,15 +364,13 @@ Discover response:
 [
   {
     ip: '10.0.0.80',
-    status: {
+    res: {
       status: 'ok',
       sessy: {
         state_of_charge: 1,
         power: 0,
         power_setpoint: 0,
-        system_state: 'SYSTEM_STATE_STANDBY',
-				system_state_details: '',
-        frequency: 50007
+        system_state: 'SYSTEM_STATE_STANDBY'
       },
       renewable_energy_phase1: { voltage_rms: 237499, current_rms: 0, power: 0 },
       renewable_energy_phase2: { voltage_rms: 0, current_rms: 0, power: 0 },
