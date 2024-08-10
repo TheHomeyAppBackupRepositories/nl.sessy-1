@@ -1,6 +1,6 @@
 /* eslint-disable no-await-in-loop */
 /*
-Copyright 2023, Robin de Gruijter (gruijter@hotmail.com)
+Copyright 2023 - 2024, Robin de Gruijter (gruijter@hotmail.com)
 
 This file is part of nl.sessy.
 
@@ -22,7 +22,8 @@ along with nl.sessy. If not, see <http://www.gnu.org/licenses/>.
 
 const { Device } = require('homey');
 const util = require('util');
-const Sessy = require('../../sessy');
+const SessyLocal = require('../../sessy_local');
+// const SessyCloud = require('../../sessy_cloud');
 
 const setTimeoutPromise = util.promisify(setTimeout);
 
@@ -37,12 +38,13 @@ class SessyDevice extends Device {
 			this.batIsEmpty = false;
 			this.overrideCounter = 0;
 			const settings = this.getSettings();
-			this.sessy = new Sessy(settings);
 
-			// set Homey control mode
-			if (settings.force_control_strategy) {
-				await this.setControlStrategy('POWER_STRATEGY_API', 'device init');
-			}
+			this.useCloud = this.homey.platform === 'cloud'; // || !settings.use_local_connection;
+			this.useLocalLogin = !this.useCloud && settings.sn_dongle !== '' && settings.password_dongle !== '';
+
+			// if (this.useCloud) this.sessy = new SessyCloud(settings); else
+			if (settings.use_mdns) await this.discover();
+			this.sessy = new SessyLocal(settings);
 
 			// check for capability migration
 			await this.migrate();
@@ -50,8 +52,14 @@ class SessyDevice extends Device {
 			// register capability listeners
 			await this.registerListeners();
 
+			// set Homey control mode
+			if (this.useLocalLogin && settings.force_control_strategy) {
+				await this.setControlStrategy('POWER_STRATEGY_API', 'device init');
+			}
+
 			// start polling device for info
-			this.startPolling(settings.pollingInterval || 10);
+			const pollingInterval = this.homey.platform === 'cloud' ? 10 : (settings.pollingInterval || 10);
+			this.startPolling(pollingInterval);
 			this.log('Sessy device has been initialized');
 		} catch (error) {
 			this.error(error);
@@ -61,17 +69,78 @@ class SessyDevice extends Device {
 		}
 	}
 
+	// mDNS related stuff
+	async discover() {
+		const discoveryStrategy = this.driver.getDiscoveryStrategy();
+		const discoveryResults = await discoveryStrategy.getDiscoveryResults();
+		if (!discoveryResults) return;
+		const [discoveryResult] = Object.values(discoveryResults).filter((disc) => disc.txt.serial === this.getSettings().sn_dongle);
+		await this.discoveryAvailable(discoveryResult);
+	}
+
+	async discoveryAvailable(discoveryResult) { // onDiscoveryAvailable(discoveryResult)
+		// This method will be executed once when the device has been found (onDiscoveryResult returned true)
+		if (!discoveryResult) return;
+		if (this.getSettings().host !== discoveryResult.address) {
+			this.log(`${this.getName()} IP address changed to ${discoveryResult.address}`);
+			if (this.getSettings().use_mdns) {
+				this.setSettings({ host: discoveryResult.address }).catch(this.error);
+				this.restartDevice();
+			} else this.log('The IP address is NOT updated (mDNS not enabled)');
+		}
+	}
+
+	onDiscoveryResult(discoveryResult) {
+		// Return a truthy value here if the discovery result matches your device.
+		return discoveryResult.id === this.getSettings().sn_dongle;
+	}
+
+	onDiscoveryAddressChanged(discoveryResult) {
+		// Update your connection details here, reconnect when the device is offline
+		this.log('onDiscoveryAddressChanged triggered', this.getName());
+		if (this.getSettings().host !== discoveryResult.address) {
+			this.log(`${this.getName()} IP address changed to ${discoveryResult.address}`);
+			if (this.getSettings().use_mdns) {
+				this.setSettings({ host: discoveryResult.address }).catch(this.error);
+				this.restartDevice();
+			} else this.log('The IP address is NOT updated (mDNS not enabled)');
+		} else this.log('IP address still the same :)');
+	}
+
 	async migrate() {
 		try {
 			this.log(`checking device migration for ${this.getName()}`);
+
+			// migrate from v1 to v2
+			const settings = this.getSettings() || {};
+			if (settings.username && settings.username !== '' && (!settings.sn_dongle || settings.sn_dongle === '')) {
+				this.log('migrating authentication settings from v1', this.getName());
+				await this.setSettings({
+					sn_dongle: settings.username,
+					password_dongle: settings.password,
+					use_local_connection: true,
+					username: '',
+					password: '',
+				}).catch(this.error);
+				const newSettings = this.getSettings();
+				this.sessy.login(newSettings);
+			}
+
+			if (!settings.sn_sessy || settings.sn_sessy === '') {
+				const sysInfo = await this.sessy.getSystemInfo().catch(() => {});
+				if (sysInfo && sysInfo.sessy_serial) {
+					this.log('Setting Sessy S/N', this.getName(), sysInfo.sessy_serial);
+					await this.setSettings({ sn_sessy: sysInfo.sessy_serial }).catch(this.error);
+				}
+			}
 
 			// migrate max charge/discharge settings
 			if (this.getSettings().power_max && (!this.getSettings().power_max_charge || !this.getSettings().power_max_discharge)) {
 				const maxCharge = this.getSettings().power_max;
 				const maxDisCharge = maxCharge > 1800 ? 1800 : maxCharge;
 				this.log('migrating max (dis)charge settings', maxCharge, maxDisCharge);
-				await this.setSettings({ power_max_charge: maxCharge });
-				await this.setSettings({ power_max_discharge: maxDisCharge });
+				await this.setSettings({ power_max_charge: maxCharge }).catch(this.error);
+				await this.setSettings({ power_max_discharge: maxDisCharge }).catch(this.error);
 			}
 
 			// store the capability states before migration
@@ -162,8 +231,9 @@ class SessyDevice extends Device {
 			this.busy = true;
 			// get new status and update the devicestate
 			const status = await this.sessy.getStatus();
+			// console.log(this.getName(), status);
 			let strategy = null;
-			if (this.getSettings().username !== '' && this.getSettings().password !== '') strategy = await this.sessy.getStrategy();
+			if (this.useCloud || this.useLocalLogin) strategy = await this.sessy.getStrategy();
 			this.setAvailable().catch(() => null);
 			await this.updateDeviceState(status, strategy);
 			// check if power is within min/max settings, but only if setpoint is set
@@ -171,7 +241,7 @@ class SessyDevice extends Device {
 			// check if battery is empty or full
 			await this.checkBatEmptyFull();
 			// check fw every 60 minutes
-			if (strategy && (Date.now() - this.lastFWCheck > 60 * 60 * 1000)) {
+			if ((this.useCloud || this.useLocalLogin) && (Date.now() - this.lastFWCheck > 60 * 60 * 1000)) {
 				const OTAstatus = await this.sessy.getOTAStatus();
 				await this.updateFWState(OTAstatus);
 				this.lastFWCheck = Date.now();
@@ -189,8 +259,18 @@ class SessyDevice extends Device {
 		this.log(`${this.getName()} has been added`);
 	}
 
-	async onSettings({ newSettings }) { // oldSettings, changedKeys
+	async onSettings({ newSettings, changedKeys }) { // oldSettings, changedKeys
 		this.log(`${this.getName()} settings where changed`, newSettings);
+		// check for illegal settings
+		if (changedKeys.includes('use_local_connection')) {
+			if (this.homey.platform === 'cloud') throw Error(this.homey.__('sessy.homeyProOnly'));
+			if (newSettings.host.length < 3) throw Error(this.homey.__('sessy.incomplete'));
+		}
+		if (changedKeys.includes('force_control_strategy')) {
+			if (this.homey.platform === 'cloud') throw Error(this.homey.__('sessy.homeyProOnly'));
+			if (newSettings.host.length < 3 || newSettings.sn_dongle === ''
+				|| newSettings.password_dongle === '') throw Error(this.homey.__('pair.incomplete'));
+		}
 		this.restarting = false;
 		this.restartDevice(2 * 1000);
 	}
@@ -226,7 +306,7 @@ class SessyDevice extends Device {
 			const newBatFirmwareAvailable = fwBat !== availableFWBat;
 			if (firmwareDongleChanged || firmwareBatChanged) {
 				this.log('The firmware was updated:', fwDongle, fwBat);
-				await this.setSettings({ fwDongle, fwBat });
+				await this.setSettings({ fwDongle, fwBat }).catch(this.error);
 				const tokens = { fwDongle, fwBat };
 				this.homey.app.triggerFirmwareChanged(this, tokens, {});
 				const excerpt = this.homey.__('sessy.newFirmware', { fw: `Dongle: ${fwDongle}, Bat: ${fwBat}` });
@@ -251,8 +331,11 @@ class SessyDevice extends Device {
 		// this.log(`updating states for: ${this.getName()}`);
 		try {
 			// determine capability states
-			let chargeMode = status.sessy.power_setpoint < 0 ? 'CHARGE' : 'DISCHARGE';
-			if (status.sessy.power_setpoint === 0) chargeMode = 'STOP';
+			let chargeMode = 'STOP';
+			if (status.sessy.power_setpoint < 0) chargeMode = 'CHARGE_ECO';
+			if (status.sessy.power_setpoint < -1500) chargeMode = 'CHARGE';
+			if (status.sessy.power_setpoint > 0) chargeMode = 'DISCHARGE_ECO';
+			if (status.sessy.power_setpoint > 1000) chargeMode = 'DISCHARGE';
 			const systemState = status.sessy.system_state.replace('SYSTEM_STATE_', '');
 			const alarmFault = systemState.includes('ERROR');
 			const totalREPower = status.renewable_energy_phase1.power + status.renewable_energy_phase2.power + status.renewable_energy_phase3.power;
@@ -261,6 +344,7 @@ class SessyDevice extends Device {
 				control_strategy: controlStrategy,
 				charge_mode: chargeMode,
 				system_state: systemState,
+				system_state_details: status.sessy.system_state_details,
 				alarm_fault: alarmFault,
 				measure_battery: status.sessy.state_of_charge * 100,
 				meter_setpoint: status.sessy.power_setpoint,
@@ -281,7 +365,7 @@ class SessyDevice extends Device {
 			// setup custom flow triggers
 			const systemStateChanged = (systemState !== this.getCapabilityValue('system_state'));
 			const chargeModeChanged = (chargeMode !== this.getCapabilityValue('charge_mode'));
-			const controlStrategyChanged = (controlStrategy !== this.getCapabilityValue('control_strategy'));
+			const controlStrategyChanged = (controlStrategy && (controlStrategy !== this.getCapabilityValue('control_strategy')));
 
 			// set the capabilities
 			Object.entries(capabilityStates).forEach(async (entry) => {
@@ -291,7 +375,7 @@ class SessyDevice extends Device {
 			// execute custom flow triggers
 			if (systemStateChanged) {
 				this.log('System State changed:', systemState);
-				const tokens = { system_state: systemState };
+				const tokens = { system_state: systemState, system_state_details: capabilityStates.system_state_details };
 				this.homey.app.triggerSystemStateChanged(this, tokens, {});
 			}
 			if (chargeModeChanged) {
@@ -300,8 +384,8 @@ class SessyDevice extends Device {
 				this.homey.app.triggerChargeModeChanged(this, tokens, {});
 			}
 			if (controlStrategyChanged) {
-				this.log('Control Strategy changed:', strategy.strategy);
-				const tokens = { control_strategy: strategy.strategy };
+				this.log('Control Strategy changed:', controlStrategy);
+				const tokens = { control_strategy: controlStrategy };
 				this.homey.app.triggerControlStrategyChanged(this, tokens, {});
 			}
 
@@ -323,14 +407,19 @@ class SessyDevice extends Device {
 
 	// detect empty or full battery
 	async checkBatEmptyFull() {
-		if (this.getCapabilityValue('system_state').includes('EMPTY')) this.batIsEmpty = true;
-		else if (this.getCapabilityValue('system_state').includes('FULL')) this.batIsFull = true;
-		else if (this.overrideCounter >= 3) {
-			if (this.getCapabilityValue('measure_battery') < 1) this.batIsEmpty = true;
-			if (this.getCapabilityValue('measure_battery') > 99) this.batIsFull = true;
+		const state = this.getCapabilityValue('system_state');
+		const soc = this.getCapabilityValue('measure_battery');
+		if (state === 'BATTERY_EMPTY') this.batIsEmpty = true;
+		else if (state === 'BATTERY_FULL') this.batIsFull = true;
+		else if (state === 'BATTERY_EMPTY_OR_FULL') {
+			if (soc < 5) this.batIsEmpty = true;
+			if (soc > 95) this.batIsFull = true;
+		}	else if (this.overrideCounter >= 3) {
+			if (soc < 1) this.batIsEmpty = true;
+			if (soc > 99) this.batIsFull = true;
 		}	else {
-			if (this.getCapabilityValue('measure_battery') >= 1) this.batIsEmpty = false;
-			if (this.getCapabilityValue('measure_battery') <= 99) this.batIsFull = false;
+			if (soc >= 1) this.batIsEmpty = false;
+			if (soc <= 99) this.batIsFull = false;
 		}
 	}
 
@@ -359,6 +448,7 @@ class SessyDevice extends Device {
 	}
 
 	async setControlStrategy(strategy, source) {
+		if (!this.useLocalLogin) throw Error(this.homey.__('sessy.controlError'));
 		await this.sessy.setStrategy({ strategy });
 		this.log(`Control Strategy set by ${source} to ${strategy}`);
 		return Promise.resolve(true);
@@ -377,8 +467,14 @@ class SessyDevice extends Device {
 			case 'CHARGE':
 				setpoint = -2200;
 				break;
+			case 'CHARGE_ECO':
+				setpoint = -1050;
+				break;
 			case 'DISCHARGE':
 				setpoint = 1800;
+				break;
+			case 'DISCHARGE_ECO':
+				setpoint = 765;
 				break;
 			default: setpoint = 0;
 		}
@@ -397,6 +493,30 @@ class SessyDevice extends Device {
 		const sp = await this.limitSetpoint(setpoint);
 		await this.sessy.setSetpoint({ setpoint: sp });
 		this.log(`Power setpoint set by ${source} to ${sp}`);
+		return Promise.resolve(true);
+	}
+	async setMinPower(setpoint, source) {
+		await this.sessy.setSystemSettings({ min_power: setpoint });
+		this.log(`Min power set by ${source} to ${setpoint}`);
+		return Promise.resolve(true);
+	}
+
+	async setMaxPower(setpoint, source) {
+		await this.sessy.setSystemSettings({ max_power: setpoint });
+		this.log(`Max power set by ${source} to ${setpoint}`);
+		return Promise.resolve(true);
+	}
+
+	async setAllowedNoiseLevel(setpoint, source) {
+		await this.sessy.setSystemSettings({ allowed_noise_level: setpoint });
+		this.log(`Max noise level set by ${source} to ${setpoint}`);
+		return Promise.resolve(true);
+	}
+
+	async restart(source) {
+		if (!this.useLocalLogin) throw Error(this.homey.__('sessy.controlError'));
+		await this.sessy.restart();
+		this.log(`Restart command executed from ${source}`);
 		return Promise.resolve(true);
 	}
 

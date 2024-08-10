@@ -25,7 +25,6 @@ const SessyLocal = require('../../sessy_local');
 
 const capabilities = [
 	'measure_power',
-	'meter_offPeak',
 
 	'measure_power.l1',
 	'measure_power.l2',
@@ -38,28 +37,14 @@ const capabilities = [
 	'measure_voltage.l2',
 	'measure_voltage.l3',
 
-	'meter_power.peak',
-	'meter_power.offPeak',
-	'meter_power.producedPeak',
-	'meter_power.producedOffPeak',
-
-	'meter_power',
-
-	'meter_voltage_sag',
-	'meter_voltage_swell',
-	'meter_power_failure',
-
-	'measure_gas',
-	'meter_gas',
-
 	'system_state',
 ];
 
-class P1Driver extends Driver {
+class CTDriver extends Driver {
 
 	async onInit() {
 		this.ds = { capabilities };
-		this.log('P1 driver has been initialized');
+		this.log('CT driver has been initialized');
 	}
 
 	async onPair(session) {
@@ -80,16 +65,16 @@ class P1Driver extends Driver {
 		// 		const settings = conSett;
 		// 		const SESSY = new SessyCloud(settings);
 		// 		// check credentials and get all batteries
-		// 		const disc = await SESSY.discover({ p1: true });
+		// 		const disc = await SESSY.discover({ ct: true });
 		// 		if (!disc || !disc[0]) throw Error((this.homey.__('pair.no_meters_registered')));
 		// 		discovered = [];
-		// 		disc.forEach(async (p1) => {
-		// 			const dev = { ...p1 };
-		// 			dev.id = p1.code;
-		// 			dev.name = p1.fullName;
+		// 		disc.forEach(async (ct) => {
+		// 			const dev = { ...ct };
+		// 			dev.id = ct.code;
+		// 			dev.name = ct.fullName;
 		// 			dev.usernamePortal = settings.username_portal;
 		// 			dev.passwordPortal = settings.password_portal;
-		// 			// dev.fwDongle = p1.version;
+		// 			// dev.fwDongle = ct.version;
 		// 			dev.useLocalConnection = this.homey.platform !== 'cloud';
 		// 			discovered.push(dev);
 		// 		});
@@ -104,9 +89,9 @@ class P1Driver extends Driver {
 			const discoveryStrategy = this.getDiscoveryStrategy();
 			const discoveryResults = await discoveryStrategy.getDiscoveryResults();
 			const disc = Object.values(discoveryResults)
-				.filter((discoveryResult) => discoveryResult.txt.device.includes('P1'))
+				.filter((discoveryResult) => discoveryResult.txt.device.includes('CT'))
 				.map((discoveryResult) => ({
-					name: `SESSY_P1_${discoveryResult.txt.serial}`,
+					name: `SESSY_CT_${discoveryResult.txt.serial}`,
 					id: discoveryResult.txt.serial,
 					ip: discoveryResult.address,
 					port: discoveryResult.port,
@@ -118,7 +103,7 @@ class P1Driver extends Driver {
 				const dev = { ...sessy };
 				// add status info
 				const SESSY = new SessyLocal({ host: dev.ip, port: dev.port });
-				dev.status = await SESSY.getStatus({ p1: true }).catch(this.error);
+				dev.status = await SESSY.getStatus({ ct: true }).catch(this.error);
 				return dev;
 			});
 			discovered = await Promise.all(discPromise);
@@ -142,8 +127,8 @@ class P1Driver extends Driver {
 				const dev = { ...conSett };
 				// check credentials and get status info
 				const SESSY = new SessyLocal({ host: dev.host, port: dev.port });
-				dev.status = await SESSY.getStatus({ p1: true });
-				dev.name = `P1_${dev.sn_dongle}`;
+				dev.status = await SESSY.getStatus({ ct: true });
+				dev.name = `CT_${dev.sn_dongle}`;
 				dev.id = dev.sn_dongle;
 				dev.ip = dev.host;
 				dev.useMdns = dev.use_mdns;
@@ -161,25 +146,24 @@ class P1Driver extends Driver {
 		session.setHandler('list_devices', async () => {
 			try {
 				const allDevicesPromise = [];
-				discovered.forEach(async (p1) => {
+				discovered.forEach(async (ct) => {
 					// construct the homey device
 					const device = {
-						name: p1.name,
+						name: ct.name,
 						data: {
-							id: p1.id,
+							id: ct.id,
 						},
 						capabilities,
 						settings: {
-							id: p1.id,
-							username_portal: p1.usernamePortal,
-							password_portal: p1.passwordPortal,
-							// use_local_connection: p1.useLocalConnection,
-							sn_dongle: p1.id,
-							password_dongle: p1.password_dongle,
-							host: p1.ip,
-							port: p1.port || 80,
-							use_mdns: p1.useMdns,
-							DSMR: p1.status && p1.status.dsmr_version && p1.status.dsmr_version.toString(),
+							id: ct.id,
+							username_portal: ct.usernamePortal,
+							password_portal: ct.passwordPortal,
+							// use_local_connection: ct.useLocalConnection,
+							sn_dongle: ct.id,
+							password_dongle: ct.password_dongle,
+							host: ct.ip,
+							port: ct.port || 80,
+							use_mdns: ct.useMdns,
 						},
 					};
 					allDevicesPromise.push(device);
@@ -197,4 +181,4 @@ class P1Driver extends Driver {
 
 }
 
-module.exports = P1Driver;
+module.exports = CTDriver;
